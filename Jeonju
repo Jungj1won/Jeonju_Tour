@@ -1,3 +1,297 @@
+### 네이버 블로그 크롤링 ###
+
+import urllib.request
+from selenium.common.exceptions import NoSuchElementException
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+
+
+# 웹드라이버 설정
+options = webdriver.ChromeOptions()
+options.add_experimental_option("excludeSwitches", ["enable-automation"])
+options.add_experimental_option("useAutomationExtension", False)
+
+#정보입력
+client_id = "JLNLroKbYKkQae1rXCXU" # 발급받은 id 입력
+client_secret = "8m3PJuBavz" # 발급받은 secret 입력 
+quote = input("검색어를 입력해주세요.: ") #검색어 입력받기
+encText = urllib.parse.quote(quote)
+display_num = input("검색 출력결과 갯수를 적어주세요.(최대100, 숫자만 입력): ") #출력할 갯수 입력받기
+url = "https://openapi.naver.com/v1/search/blog?query=" + encText +"&display="+display_num# json 결과
+# url = "https://openapi.naver.com/v1/search/blog.xml?query=" + encText # xml 결과
+request = urllib.request.Request(url)
+request.add_header("X-Naver-Client-Id",client_id)
+request.add_header("X-Naver-Client-Secret",client_secret)
+response = urllib.request.urlopen(request)
+rescode = response.getcode()
+
+if(rescode==200):
+    response_body = response.read()
+    #print(response_body.decode('utf-8'))
+else:
+    print("Error Code:" + rescode)
+
+body = response_body.decode('utf-8')
+body
+
+#body를 나누기
+list1 = body.split('\n\t\t{\n\t\t\t')
+#naver블로그 글만 가져오기
+list1 = [i for i in list1 if 'naver' in i]
+print(list1)
+
+#블로그 제목, 링크 뽑기
+import re
+titles = []
+links = []
+for i in list1:
+    title = re.findall('"title":"(.*?)",\n\t\t\t"link"',i)
+    link = re.findall('"link":"(.*?)",\n\t\t\t"description"',i)
+    titles.append(title)
+    links.append(link)
+ 
+titles = [r for i in titles for r in i]
+links = [r for i in links for r in i]
+
+print('<<제목 모음>>')
+print(titles)
+print('총 제목 수: ',len(titles),'개')#제목갯수확인
+print('\n<<링크 모음>>')
+print(links)
+print('총 링크 수: ',len(links),'개')#링크갯수확인
+
+# 링크를 다듬기 (필요없는 부분 제거 및 수정)
+blog_links = []
+for i in links:
+    a = i.replace('\\','')
+    b = a.replace('?Redirect=Log&logNo=','/')
+    blog_links.append(b)
+
+print(blog_links)
+print('생성된 링크 갯수:',len(blog_links),'개')
+
+#본문 크롤링
+import time
+from selenium import webdriver
+
+# 크롬 드라이버 설치
+driver = webdriver.Chrome("C:/Users/gogus/python/Untitled Folder/chromedriver_win32/chromedriver.exe")
+driver.implicitly_wait(3)
+
+#블로그 링크 하나씩 불러서 크롤링
+contents = []
+for i in blog_links:
+    #블로그 링크 하나씩 불러오기
+    driver.get(i)
+    time.sleep(1)
+    #블로그 안 본문이 있는 iframe에 접근하기
+    driver.switch_to.frame("mainFrame")
+    #본문 내용 크롤링하기
+    #본문 내용 크롤링하기
+    try:
+        a = driver.find_element(By.CSS_SELECTOR,'div.se-main-container').text
+        contents.append(a)
+    # NoSuchElement 오류시 예외처리(구버전 블로그에 적용)
+    except NoSuchElementException:
+        a = driver.find_element(By.CSS_SELECTOR,'div#content-area').text
+        contents.append(a)
+    #print(본문: \n', a)
+
+
+driver.quit() #창닫기
+print("<<본문 크롤링이 완료되었습니다.>>")
+
+#제목, 블로그링크, 본문내용 Dataframe으로 만들기
+import pandas as pd
+df = pd.DataFrame({'제목':titles, '링크':blog_links,'내용':contents})
+
+
+### 크롤링 내용으로 워드클라우드 작성 ###
+
+from wordcloud import WordCloud # 워드클라우드 제작 라이브러리
+import pandas as pd # 데이터 프레임 라이브러리
+import numpy as np # 행렬 라이브러리
+import matplotlib.pyplot as plt # 워드클라우드 시각화 라이브러리
+
+
+df['제목'] = df['제목'].str.replace('[^가-힣]', ' ', regex = True)
+
+import konlpy
+kkma = konlpy.tag.Kkma() #형태소 분석기 꼬꼬마(Kkma)
+
+nouns = df['제목'].apply(kkma.nouns)
+
+nouns = nouns.explode()
+
+df_word = pd.DataFrame({'word' : nouns})
+df_word['count'] = df_word['word'].str.len()
+df_word = df_word.query('count >= 2')
+
+df_word = df_word.groupby('word', as_index = False).count().sort_values('count', ascending = False)
+df_word
+
+df_word = df_word.iloc[:, :]
+df_word
+
+dic_word = df_word.set_index('word').to_dict()['count']
+
+wc = WordCloud(random_state = 123, font_path = "C:/Users/gogus/python/기타/nanum-barun-gothic/NanumBarunGothic.otf"
+               , width = 400,
+               height = 400, background_color = 'white')
+
+img_wordcloud = wc.generate_from_frequencies(dic_word)
+
+plt.figure(figsize = (10, 10)) # 크기 지정하기
+plt.axis('off') # 축 없애기
+plt.imshow(img_wordcloud) # 결과 보여주기
+
+df['내용'] = df['내용'].str.replace('[^가-힣]', ' ', regex = True)
+
+import konlpy
+kkma = konlpy.tag.Kkma() #형태소 분석기 꼬꼬마(Kkma)
+
+nouns = df['내용'].apply(kkma.nouns)
+
+nouns = nouns.explode()
+
+df_word = pd.DataFrame({'word' : nouns})
+df_word['count'] = df_word['word'].str.len()
+df_word = df_word.query('count >= 2')
+
+df_word = df_word.groupby('word', as_index = False).count().sort_values('count', ascending = False)
+df_word
+
+df_word = df_word.iloc[1:, :]
+df_word
+
+dic_word = df_word.set_index('word').to_dict()['count']
+
+wc = WordCloud(random_state = 123, font_path = "C:/Users/gogus/python/기타/nanum-barun-gothic/NanumBarunGothic.otf"
+               , width = 400,
+               height = 400, background_color = 'white')
+
+img_wordcloud = wc.generate_from_frequencies(dic_word)
+
+plt.figure(figsize = (10, 10)) # 크기 지정하기
+plt.axis('off') # 축 없애기
+plt.imshow(img_wordcloud) # 결과 보여주기
+
+
+### 숙박 데이터 수집 ###
+import pandas as pd
+import numpy as np
+import pyproj
+import folium
+
+dataset0 = pd.read_csv('C:/Users/gogus/python/공모전/dataset/새 폴더/숙박/6450000_CSV/6450000_전라북도_03_11_01_P_관광숙박업.csv', encoding='cp949')
+dataset1 = pd.read_csv('C:/Users/gogus/python/공모전/dataset/새 폴더/숙박/6450000_CSV/6450000_전라북도_03_11_02_P_관광펜션업.csv', encoding='cp949')
+dataset2 = pd.read_csv('C:/Users/gogus/python/공모전/dataset/새 폴더/숙박/6450000_CSV/6450000_전라북도_03_11_03_P_숙박업.csv', encoding='cp949')
+
+dataset = pd.DataFrame()
+dataset = pd.concat([dataset,dataset1,dataset2 ])
+
+dataset.tail(5)
+
+dataset.columns
+
+df1=dataset[dataset['소재지전체주소'].str.contains('전주시', na=False)]
+df1
+
+df=df1[['좌표정보(x)', '좌표정보(y)']]
+df
+
+df['좌표정보(x)'] = pd.to_numeric(df['좌표정보(x)'], errors="coerce")
+df['좌표정보(y)'] = pd.to_numeric(df['좌표정보(y)'], errors="coerce")
+
+df = df.dropna()
+df.index=range(len(df))
+df.tail()
+
+def project_array(coord, p1_type, p2_type):
+    """
+    좌표계 변환 함수
+    - coord: x, y 좌표 정보가 담긴 NumPy Array
+    - p1_type: 입력 좌표계 정보 ex) epsg:5179
+    - p2_type: 출력 좌표계 정보 ex) epsg:4326
+    """
+    p1 = pyproj.Proj(init=p1_type)
+    p2 = pyproj.Proj(init=p2_type)
+    fx, fy = pyproj.transform(p1, p2, coord[:, 0], coord[:, 1])
+    return np.dstack([fx, fy])[0]
+
+# DataFrame -> NumPy Array 변환
+coord = np.array(df)
+coord
+
+# 좌표계 정보 설정
+p1_type = "epsg:2097"
+p2_type = "epsg:4326"
+
+# project_array() 함수 실행
+result = project_array(coord, p1_type, p2_type)
+result
+
+
+df['경도'] = result[:, 0]
+df['위도'] = result[:, 1]
+
+df.tail()    
+
+# 지도 중심 좌표 설정
+lat_c, lon_c = 37.53165351203043, 126.9974246490573
+
+# Folium 지도 객체 생성
+m = folium.Map(location=[lat_c, lon_c], zoom_start=6)
+
+# 마커 생성
+for _, row in df.iterrows():
+    lat, lon = row['위도'], row['경도']
+    folium.Marker(location=[lat, lon]).add_to(m)
+
+
+### 주요관광지 입장객 수집 ###
+!sudo apt-get install -y fonts-nanum
+!sudo fc-cache -fv
+!rm ~/.cache/matplotlib -rf
+
+import matplotlib.pyplot as plt
+
+plt.rc('font', family='NanumBarunGothic')
+
+from google.colab import drive
+drive.mount('/content/drive')
+import pandas as pd
+jeonju = pd.read_csv('/content/drive/MyDrive/Colab Notebooks/메인프로젝트/주요관광지점 입장객_전주.csv', encoding='cp949')
+
+jeonju.head()
+
+jeonju.columns = jeonju.iloc[0]
+
+jeonju_1 = jeonju.iloc[:,[2,3,14]]
+jeonju_1.columns= ['관광지','내/외국인','2022년']
+
+jeonju_1 = jeonju_1.copy().loc[jeonju_1['내/외국인']=='합계']
+
+jeonju_1['2022년'] = jeonju_1['2022년'].str.replace(',','')
+jeonju_1 = jeonju_1.fillna(0)
+jeonju_1['2022년'] = jeonju_1['2022년'].astype('int')
+
+jeonju_1.drop(['내/외국인'],axis=1,inplace=True)
+
+jeonju_1=jeonju_1.sort_values(by='2022년').reset_index()
+
+jeonju_1.drop(['index'],axis=1,inplace=True)
+
+j=jeonju_1.iloc[[12,14],:]
+j.loc[3] = ['한옥마을',11294916]
+
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
+
+sns.barplot(x='관광지',y='2022년',data=j,palette='YlGnBu')
+
+
 ### 음식점 데이터 전처리 ###
 
 food = pd.read_csv("C:/Users/k0707/OneDrive/바탕 화면/전주_음식점_100.csv",encoding = 'EUC_KR')
